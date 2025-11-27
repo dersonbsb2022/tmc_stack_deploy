@@ -2,7 +2,7 @@
 set -Eeuo pipefail
 
 # Configurações Globais
-REPO_BASE_URL="https://raw.githubusercontent.com/SEU_USUARIO/SEU_REPO/main/apps"
+REPO_BASE_URL="https://raw.githubusercontent.com/dersonbsb2022/tmc_stack_deploy/main/novo_instalador/apps"
 # Para testes locais, você pode descomentar a linha abaixo:
 # REPO_BASE_URL="file://$(pwd)/apps"
 
