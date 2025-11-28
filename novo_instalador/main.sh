@@ -180,12 +180,13 @@ menu_principal() {
         echo "3. Instalar Redis"
         echo "4. Instalar N8N"
         echo "5. Instalar Supabase"
+        echo "6. Instalar RabbitMQ (Teste Simples)"
         echo "0. Sair"
         echo ""
         read -p "Escolha uma opção: " opcao
 
         # Verifica token antes de qualquer instalação que não seja a Base (1)
-        if [[ "$opcao" =~ ^[2-5]$ ]]; then
+        if [[ "$opcao" =~ ^[2-6]$ ]]; then
             verificar_e_renovar_token
         fi
 
@@ -195,6 +196,7 @@ menu_principal() {
             3) baixar_e_executar "install_redis.sh" ;;
             4) baixar_e_executar "install_n8n.sh" ;;
             5) baixar_e_executar "install_supabase.sh" ;;
+            6) baixar_e_executar "install_rabbitmq.sh" ;;
             0) exit 0 ;;
             *) erro "Opção inválida!" ; sleep 1 ;;
         esac
