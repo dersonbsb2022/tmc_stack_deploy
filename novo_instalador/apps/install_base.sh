@@ -81,6 +81,39 @@ else
     ok "Swarm já ativo."
 fi
 
+# 4.1 Verificação de Instalação Prévia (Traefik/Portainer)
+if docker stack ls > /dev/null 2>&1; then
+    if docker stack ls | grep -qE "traefik|portainer"; then
+        echo ""
+        echo -e "${VERMELHO}!!! ATENÇÃO !!!${NC}"
+        echo -e "${AMARELO}Detectamos que já existem stacks do Traefik ou Portainer rodando neste Swarm.${NC}"
+        echo -e "Prosseguir irá ${VERMELHO}REMOVER${NC} as instalações atuais e recriá-las do zero."
+        echo -e "Isso pode causar interrupção nos serviços e perda de configurações não persistidas."
+        echo ""
+        echo -e "Para continuar e SOBRESCREVER a instalação atual, digite: ${VERDE}CONFIRMO${NC}"
+        echo -e "Para cancelar, pressione ENTER ou digite qualquer outra coisa."
+        echo ""
+        read -p "Sua escolha: " CONFIRMACAO
+
+        if [ "$CONFIRMACAO" == "CONFIRMO" ]; then
+            info "Removendo instalações antigas..."
+            docker stack rm traefik portainer 2>/dev/null || true
+            info "Aguardando limpeza dos serviços (20s)..."
+            sleep 20
+            
+            # Opcional: Perguntar se deseja limpar os volumes também?
+            # Por segurança, vamos manter os volumes (certificados e dados do portainer)
+            # a menos que o usuário queira explicitamente limpar, mas o pedido foi "iniciar do 0".
+            # Se o usuário quer "iniciar do 0", muitas vezes é porque deu erro na config.
+            # Mas apagar certificados SSL (letsencrypt) pode gerar rate limit. Melhor manter volumes.
+            ok "Stacks removidas. Iniciando nova instalação..."
+        else
+            erro "Instalação cancelada pelo usuário."
+            exit 0
+        fi
+    fi
+fi
+
 # 5. Rede Overlay
 info "Criando rede $NOME_REDE..."
 if ! docker network ls | grep -q "$NOME_REDE"; then
