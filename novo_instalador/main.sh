@@ -71,7 +71,8 @@ verificar_dependencias() {
 # 3. Função para Baixar e Executar Scripts
 baixar_e_executar() {
     local script_name="$1"
-    local url="$REPO_BASE_URL/$script_name"
+    # Adiciona timestamp para evitar cache do GitHub Raw
+    local url="$REPO_BASE_URL/$script_name?t=$(date +%s)"
     local temp_file="/tmp/$script_name"
 
     info "Baixando $script_name..."
