@@ -237,7 +237,27 @@ wait_stack "portainer_portainer"
 
 # 8. Configuração Inicial do Portainer (API)
 info "Configurando usuário Admin no Portainer..."
-sleep 10 # Aguarda Portainer estar pronto para receber requisições
+info "Aguardando API do Portainer ficar disponível (pode levar alguns segundos)..."
+
+# Loop de espera ativa pela API
+MAX_RETRIES=12
+COUNT=0
+while [ $COUNT -lt $MAX_RETRIES ]; do
+    HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" "https://$URL_PORTAINER/api/status")
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        break
+    fi
+    echo -n "."
+    sleep 5
+    COUNT=$((COUNT+1))
+done
+echo ""
+
+if [[ "$HTTP_CODE" != "200" ]]; then
+    erro "Não foi possível conectar à API do Portainer (HTTP $HTTP_CODE) após 60s."
+    erro "Verifique se o DNS ($URL_PORTAINER) aponta para este servidor ou se o Traefik subiu corretamente."
+    # Não sai com exit 1 aqui para tentar prosseguir ou debug, mas provavelmente falhará abaixo.
+fi
 
 # Tenta criar o usuário
 RESPONSE=$(curl -k -s -X POST "https://$URL_PORTAINER/api/users/admin/init" \
@@ -248,14 +268,23 @@ if echo "$RESPONSE" | grep -q "Username"; then
     ok "Usuário admin criado."
 else
     # Se falhar, pode ser que já exista ou erro de conexão. Tenta autenticar para ver se já existe.
-    info "Não foi possível inicializar admin (talvez já exista). Tentando autenticar..."
+    info "Não foi possível inicializar admin (talvez já exista ou erro de conexão). Resposta: $RESPONSE"
+    info "Tentando autenticar..."
 fi
 
 # Gera Token
 info "Gerando Token de Acesso..."
-TOKEN=$(curl -k -s -X POST "https://$URL_PORTAINER/api/auth" \
+AUTH_RESPONSE=$(curl -k -s -X POST "https://$URL_PORTAINER/api/auth" \
     -H "Content-Type: application/json" \
-    -d "{\"username\":\"$USER_PORTAINER\",\"password\":\"$PASS_PORTAINER\"}" | jq -r .jwt)
+    -d "{\"username\":\"$USER_PORTAINER\",\"password\":\"$PASS_PORTAINER\"}")
+
+# Debug caso falhe
+if [ -z "$AUTH_RESPONSE" ]; then
+    erro "Resposta vazia ao tentar autenticar."
+    exit 1
+fi
+
+TOKEN=$(echo "$AUTH_RESPONSE" | jq -r .jwt)
 
 if [[ "$TOKEN" != "null" && -n "$TOKEN" ]]; then
     ok "Token gerado com sucesso."
@@ -273,7 +302,9 @@ EOF
     chmod 600 /root/dados_vps/dados_portainer
     ok "Credenciais salvas em /root/dados_vps/dados_portainer"
 else
-    erro "Falha ao gerar token. Verifique as credenciais ou se o Portainer subiu corretamente."
+    erro "Falha ao gerar token."
+    erro "Resposta da API: $AUTH_RESPONSE"
+    erro "Verifique as credenciais ou se o Portainer subiu corretamente."
     exit 1
 fi
 
