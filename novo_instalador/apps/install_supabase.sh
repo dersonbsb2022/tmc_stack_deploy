@@ -78,6 +78,8 @@ DADOS_FILE="/root/dados_vps/dados_portainer"
 if [ -f "$DADOS_FILE" ]; then
     info "Carregando configurações salvas..."
     PORTAINER_URL=$(grep "URL:" "$DADOS_FILE" | awk '{print $2}')
+    PORTAINER_USER=$(grep "User:" "$DADOS_FILE" | awk '{print $2}')
+    PORTAINER_PASS=$(grep "Pass:" "$DADOS_FILE" | awk '{print $2}')
     PORTAINER_TOKEN=$(grep "Token:" "$DADOS_FILE" | awk '{print $2}')
     NOME_REDE=$(grep "Network:" "$DADOS_FILE" | awk '{print $2}')
     
@@ -313,10 +315,39 @@ EOF
 # 6. Deploy via Portainer API
 info "Enviando stack para o Portainer..."
 
+# Função para renovar token se expirado
+refresh_token_if_needed() {
+    local check_status=$(curl -k -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints")
+    
+    if [[ "$check_status" == "401" || "$check_status" == "403" ]]; then
+        info "Token do Portainer expirado ou inválido (HTTP $check_status). Tentando renovar..."
+        
+        local auth_resp=$(curl -k -s -X POST "$PORTAINER_URL/api/auth" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"$PORTAINER_USER\",\"password\":\"$PORTAINER_PASS\"}")
+            
+        local new_token=$(echo "$auth_resp" | jq -r .jwt)
+        
+        if [[ "$new_token" != "null" && -n "$new_token" ]]; then
+            ok "Token renovado com sucesso."
+            PORTAINER_TOKEN="$new_token"
+            # Atualiza o arquivo para futuras execuções
+            sed -i "s|Token: .*|Token: $new_token|" "$DADOS_FILE"
+        else
+            erro "Falha ao renovar token. Verifique usuário/senha em $DADOS_FILE."
+            erro "Resposta Auth: $auth_resp"
+            exit 1
+        fi
+    fi
+}
+
+# Verifica/Renova token antes de prosseguir
+refresh_token_if_needed
+
 # Função auxiliar para buscar Swarm ID com tratamento de erro
 get_swarm_id() {
     local ep_id=$1
-    local resp=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/$ep_id/docker/swarms")
+    local resp=$(curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/$ep_id/docker/swarms")
     
     # Verifica se a resposta é um array e tem o campo Id no primeiro elemento
     if echo "$resp" | jq -e 'type == "array" and .[0].Id != null' >/dev/null 2>&1; then
@@ -336,11 +367,25 @@ fi
 if [ -z "$SWARM_ID" ]; then
     erro "Não foi possível obter o Swarm ID do Portainer."
     erro "Verifique se o Portainer está conectado ao Docker Swarm local (Endpoints 1 ou 2)."
+    
+    # DEBUG INFO
+    info "--- DEBUG INFO ---"
+    info "URL: $PORTAINER_URL"
+    info "Token (parcial): ${PORTAINER_TOKEN:0:10}..."
+    info "Tentando listar endpoints disponíveis:"
+    curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints" | jq -r '.[] | "ID: \(.Id) Name: \(.Name) Type: \(.Type)"' || echo "Falha ao listar endpoints"
+    
+    echo ""
+    info "Resposta bruta Endpoint 1:"
+    curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/1/docker/swarms"
+    echo ""
+    info "------------------"
+    
     exit 1
 fi
 
 # Verificar se stack já existe
-STACKS_RESP=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks")
+STACKS_RESP=$(curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks")
 STACK_ID=""
 
 # Verifica se a resposta é um array antes de processar

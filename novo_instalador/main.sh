@@ -85,7 +85,7 @@ verificar_e_renovar_token() {
     local token=$(grep "Token:" "$dados_file" | awk '{print $2}')
 
     # Teste simples de acesso
-    local status_code=$(curl -k -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $token" "$url/api/endpoints")
+    local status_code=$(curl -k -s -o /dev/null -w "%{http_code}" -H "Authorization: Bearer $token" "$url/api/endpoints")
 
     if [[ "$status_code" == "200" ]]; then
         ok "Token do Portainer válido."
