@@ -365,23 +365,9 @@ if [ -z "$SWARM_ID" ]; then
 fi
 
 if [ -z "$SWARM_ID" ]; then
-    erro "Não foi possível obter o Swarm ID do Portainer."
-    erro "Verifique se o Portainer está conectado ao Docker Swarm local (Endpoints 1 ou 2)."
-    
-    # DEBUG INFO
-    info "--- DEBUG INFO ---"
-    info "URL: $PORTAINER_URL"
-    info "Token (parcial): ${PORTAINER_TOKEN:0:10}..."
-    info "Tentando listar endpoints disponíveis:"
-    curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints" | jq -r '.[] | "ID: \(.Id) Name: \(.Name) Type: \(.Type)"' || echo "Falha ao listar endpoints"
-    
-    echo ""
-    info "Resposta bruta Endpoint 1:"
-    curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/1/docker/swarms"
-    echo ""
-    info "------------------"
-    
-    exit 1
+    erro "Não foi possível obter o Swarm ID do Portainer (API)."
+    info "Isso não impede a instalação, mas a stack pode aparecer como 'Limited' no Portainer."
+    info "Continuando..."
 fi
 
 # Verificar se stack já existe
