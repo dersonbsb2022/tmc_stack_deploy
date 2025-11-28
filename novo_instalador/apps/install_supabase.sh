@@ -112,7 +112,7 @@ fi
 
 # 3. Preparação
 BASE_DIR="/srv/supabase"
-mkdir -p "$BASE_DIR/volumes/db" "$BASE_DIR/volumes/storage" "$BASE_DIR/config"
+mkdir -p "$BASE_DIR/volumes/db" "$BASE_DIR/volumes/storage" "$BASE_DIR/config" "$BASE_DIR/volumes/db-init"
 
 # Gerar Segredos
 info "Gerando chaves JWT..."
@@ -133,6 +133,24 @@ Dashboard Pass: $DASHBOARD_PASSWORD
 EOF
 chmod 600 "$BASE_DIR/dados_supabase.txt"
 ok "Credenciais salvas em $BASE_DIR/dados_supabase.txt"
+
+# Criar script de inicialização do Banco de Dados
+cat > "$BASE_DIR/volumes/db-init/01-auth-setup.sql" <<EOF
+-- Garantir que usuários tenham senha definida
+ALTER USER postgres WITH PASSWORD '$DB_PASSWORD';
+ALTER USER supabase_admin WITH PASSWORD '$DB_PASSWORD';
+ALTER USER supabase_auth_admin WITH PASSWORD '$DB_PASSWORD';
+ALTER USER supabase_storage_admin WITH PASSWORD '$DB_PASSWORD';
+ALTER USER authenticator WITH PASSWORD '$DB_PASSWORD';
+ALTER USER service_role WITH PASSWORD '$DB_PASSWORD';
+ALTER USER anon WITH PASSWORD '$DB_PASSWORD';
+
+-- Garantir permissões básicas
+GRANT USAGE ON SCHEMA public TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON TABLES TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON FUNCTIONS TO postgres, anon, authenticated, service_role;
+ALTER DEFAULT PRIVILEGES IN SCHEMA public GRANT ALL ON SEQUENCES TO postgres, anon, authenticated, service_role;
+EOF
 
 # 4. Configuração Kong (API Gateway)
 cat > "$BASE_DIR/config/kong.yml" <<EOF
@@ -300,6 +318,7 @@ services:
       POSTGRES_PASSWORD: $DB_PASSWORD
     volumes:
       - $BASE_DIR/volumes/db:/var/lib/postgresql/data
+      - $BASE_DIR/volumes/db-init:/docker-entrypoint-initdb.d
     networks:
       - $NOME_REDE
     deploy:
@@ -344,30 +363,17 @@ refresh_token_if_needed() {
 # Verifica/Renova token antes de prosseguir
 refresh_token_if_needed
 
-# Função auxiliar para buscar Swarm ID com tratamento de erro
+# Função auxiliar para buscar Swarm ID localmente (Mais confiável que API)
 get_swarm_id() {
-    local ep_id=$1
-    local resp=$(curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/$ep_id/docker/swarms")
-    
-    # Verifica se a resposta é um array e tem o campo Id no primeiro elemento
-    if echo "$resp" | jq -e 'type == "array" and .[0].Id != null' >/dev/null 2>&1; then
-        echo "$resp" | jq -r '.[0].Id'
-    else
-        # Retorna vazio em caso de erro (objeto de erro ou array vazio)
-        echo ""
-    fi
+    docker info --format '{{.Swarm.Cluster.ID}}'
 }
 
-# Tenta obter ID do endpoint 1, se falhar tenta o 2
-SWARM_ID=$(get_swarm_id 1)
-if [ -z "$SWARM_ID" ]; then
-    SWARM_ID=$(get_swarm_id 2)
-fi
+SWARM_ID=$(get_swarm_id)
 
 if [ -z "$SWARM_ID" ]; then
-    erro "Não foi possível obter o Swarm ID do Portainer (API)."
-    info "Isso não impede a instalação, mas a stack pode aparecer como 'Limited' no Portainer."
-    info "Continuando..."
+    erro "Não foi possível obter o Swarm ID localmente."
+    erro "Verifique se o Docker Swarm está ativo neste nó."
+    exit 1
 fi
 
 # Verificar se stack já existe
@@ -379,20 +385,72 @@ if echo "$STACKS_RESP" | jq -e 'type == "array"' >/dev/null 2>&1; then
     STACK_ID=$(echo "$STACKS_RESP" | jq -r '.[] | select(.Name == "supabase") | .Id' 2>/dev/null || true)
 fi
 
+# Ler conteúdo do arquivo gerado para enviar via JSON
+STACK_CONTENT=$(cat "$BASE_DIR/supabase-stack.yaml")
+# Escapar conteúdo para JSON (usando jq para segurança)
+JSON_CONTENT=$(jq -n --arg content "$STACK_CONTENT" '$content')
+
 if [ -n "$STACK_ID" ]; then
-    info "Atualizando stack existente (ID: $STACK_ID)..."
-    URL_DEPLOY="$PORTAINER_URL/api/stacks/$STACK_ID?endpointId=1"
-    METHOD="PUT"
-    # Para update, o payload é diferente, geralmente enviamos o conteúdo do arquivo
-    # Simplificação: Vamos usar docker stack deploy localmente já que estamos no manager
-    # Isso evita complexidade de upload de arquivo via API bash puro
-    info "Usando docker stack deploy local..."
-    docker stack deploy -c "$BASE_DIR/supabase-stack.yaml" supabase
+    info "Atualizando stack existente (ID: $STACK_ID) via API..."
+    
+    # Payload para Update (PUT /api/stacks/{id}?endpointId=1)
+    # Nota: Para Swarm stacks criadas via API, o update também deve ser via API
+    
+    UPDATE_PAYLOAD=$(jq -n \
+        --arg stackFileContent "$STACK_CONTENT" \
+        --arg envVar "[]" \
+        '{
+            StackFileContent: $stackFileContent,
+            Env: [],
+            Prune: true
+        }')
+
+    HTTP_CODE=$(curl -k -s -o /dev/null -w "%{http_code}" -X PUT "$PORTAINER_URL/api/stacks/$STACK_ID?endpointId=1" \
+        -H "Authorization: Bearer $PORTAINER_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$UPDATE_PAYLOAD")
+
+    if [[ "$HTTP_CODE" == "200" ]]; then
+        ok "Stack atualizada com sucesso via Portainer API."
+    else
+        erro "Falha ao atualizar stack via API (HTTP $HTTP_CODE)."
+        # Fallback
+        docker stack deploy -c "$BASE_DIR/supabase-stack.yaml" supabase
+    fi
+
 else
-    info "Criando nova stack..."
-    # Fallback para deploy local também, mais robusto via CLI quando já estamos no servidor
-    docker stack deploy -c "$BASE_DIR/supabase-stack.yaml" supabase
+    info "Criando nova stack via Portainer API..."
+    
+    # Payload para Create (POST /api/stacks?type=1&method=string&endpointId=1)
+    CREATE_PAYLOAD=$(jq -n \
+        --arg name "supabase" \
+        --arg swarmID "$SWARM_ID" \
+        --arg stackFileContent "$STACK_CONTENT" \
+        '{
+            Name: $name,
+            SwarmID: $swarmID,
+            StackFileContent: $stackFileContent,
+            Env: []
+        }')
+
+    RESP=$(curl -k -s -X POST "$PORTAINER_URL/api/stacks?type=1&method=string&endpointId=1" \
+        -H "Authorization: Bearer $PORTAINER_TOKEN" \
+        -H "Content-Type: application/json" \
+        -d "$CREATE_PAYLOAD")
+
+    # Verifica se criou (ID presente na resposta)
+    NEW_ID=$(echo "$RESP" | jq -r .Id)
+    
+    if [[ "$NEW_ID" != "null" && -n "$NEW_ID" ]]; then
+        ok "Stack criada com sucesso no Portainer (ID: $NEW_ID)."
+    else
+        erro "Falha ao criar stack via API."
+        echo "Resposta: $RESP"
+        # Fallback
+        docker stack deploy -c "$BASE_DIR/supabase-stack.yaml" supabase
+    fi
 fi
+
 
 wait_stack "supabase_kong"
 wait_stack "supabase_studio"
