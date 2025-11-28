@@ -455,6 +455,7 @@ else
 fi
 
 
+wait_stack "supabase_db"
 wait_stack "supabase_kong"
 wait_stack "supabase_studio"
 
