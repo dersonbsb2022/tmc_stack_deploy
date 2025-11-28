@@ -313,21 +313,40 @@ EOF
 # 6. Deploy via Portainer API
 info "Enviando stack para o Portainer..."
 
-# Obter Swarm ID
-SWARM_ID=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/1/docker/swarms" | jq -r '.[0].Id')
+# Função auxiliar para buscar Swarm ID com tratamento de erro
+get_swarm_id() {
+    local ep_id=$1
+    local resp=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/$ep_id/docker/swarms")
+    
+    # Verifica se a resposta é um array e tem o campo Id no primeiro elemento
+    if echo "$resp" | jq -e 'type == "array" and .[0].Id != null' >/dev/null 2>&1; then
+        echo "$resp" | jq -r '.[0].Id'
+    else
+        # Retorna vazio em caso de erro (objeto de erro ou array vazio)
+        echo ""
+    fi
+}
 
-if [ -z "$SWARM_ID" ] || [ "$SWARM_ID" == "null" ]; then
-    # Tenta endpoint 2 se 1 falhar (as vezes o local é 2)
-    SWARM_ID=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/endpoints/2/docker/swarms" | jq -r '.[0].Id')
+# Tenta obter ID do endpoint 1, se falhar tenta o 2
+SWARM_ID=$(get_swarm_id 1)
+if [ -z "$SWARM_ID" ]; then
+    SWARM_ID=$(get_swarm_id 2)
 fi
 
-if [ -z "$SWARM_ID" ] || [ "$SWARM_ID" == "null" ]; then
+if [ -z "$SWARM_ID" ]; then
     erro "Não foi possível obter o Swarm ID do Portainer."
+    erro "Verifique se o Portainer está conectado ao Docker Swarm local (Endpoints 1 ou 2)."
     exit 1
 fi
 
 # Verificar se stack já existe
-STACK_ID=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks" | jq -r '.[] | select(.Name == "supabase") | .Id')
+STACKS_RESP=$(curl -k -s -H "X-API-Key: $PORTAINER_TOKEN" "$PORTAINER_URL/api/stacks")
+STACK_ID=""
+
+# Verifica se a resposta é um array antes de processar
+if echo "$STACKS_RESP" | jq -e 'type == "array"' >/dev/null 2>&1; then
+    STACK_ID=$(echo "$STACKS_RESP" | jq -r '.[] | select(.Name == "supabase") | .Id' 2>/dev/null || true)
+fi
 
 if [ -n "$STACK_ID" ]; then
     info "Atualizando stack existente (ID: $STACK_ID)..."
