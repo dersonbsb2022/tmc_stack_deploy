@@ -68,6 +68,49 @@ verificar_dependencias() {
     fi
 }
 
+# 2.1 Verificação e Renovação de Token do Portainer
+verificar_e_renovar_token() {
+    local dados_file="/root/dados_vps/dados_portainer"
+    
+    # Se o arquivo não existe, não há o que verificar (provavelmente install_base ainda não rodou)
+    if [ ! -f "$dados_file" ]; then
+        return 0
+    fi
+
+    info "Verificando token de acesso ao Portainer..."
+    
+    local url=$(grep "URL:" "$dados_file" | awk '{print $2}')
+    local user=$(grep "User:" "$dados_file" | awk '{print $2}')
+    local pass=$(grep "Pass:" "$dados_file" | awk '{print $2}')
+    local token=$(grep "Token:" "$dados_file" | awk '{print $2}')
+
+    # Teste simples de acesso
+    local status_code=$(curl -k -s -o /dev/null -w "%{http_code}" -H "X-API-Key: $token" "$url/api/endpoints")
+
+    if [[ "$status_code" == "200" ]]; then
+        ok "Token do Portainer válido."
+    else
+        info "Token inválido ou expirado (HTTP $status_code). Tentando renovar..."
+        
+        # Tenta autenticar novamente
+        local auth_resp=$(curl -k -s -X POST "$url/api/auth" \
+            -H "Content-Type: application/json" \
+            -d "{\"username\":\"$user\",\"password\":\"$pass\"}")
+            
+        local new_token=$(echo "$auth_resp" | jq -r .jwt)
+        
+        if [[ "$new_token" != "null" && -n "$new_token" ]]; then
+            # Atualiza o arquivo
+            sed -i "s|Token: .*|Token: $new_token|" "$dados_file"
+            ok "Token renovado e salvo com sucesso."
+        else
+            erro "Falha ao renovar token do Portainer."
+            erro "Resposta: $auth_resp"
+            read -p "Pressione ENTER para continuar mesmo assim (pode falhar)..."
+        fi
+    fi
+}
+
 # 3. Função para Baixar e Executar Scripts
 baixar_e_executar() {
     local script_name="$1"
@@ -135,6 +178,11 @@ menu_principal() {
         echo "0. Sair"
         echo ""
         read -p "Escolha uma opção: " opcao
+
+        # Verifica token antes de qualquer instalação que não seja a Base (1)
+        if [[ "$opcao" =~ ^[2-5]$ ]]; then
+            verificar_e_renovar_token
+        fi
 
         case $opcao in
             1) baixar_e_executar "install_base.sh" ;;
