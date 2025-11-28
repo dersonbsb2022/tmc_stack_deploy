@@ -433,7 +433,10 @@ else
             Env: []
         }')
 
-    RESP=$(curl -k -s -X POST "$PORTAINER_URL/api/stacks?type=1&method=string&endpointId=1" \
+    # Endpoint específico para criação de Swarm Stacks via String (Portainer 2.19+)
+    # POST /api/stacks/create/swarm/string?endpointId=1
+
+    RESP=$(curl -k -s -X POST "$PORTAINER_URL/api/stacks/create/swarm/string?endpointId=1" \
         -H "Authorization: Bearer $PORTAINER_TOKEN" \
         -H "Content-Type: application/json" \
         -d "$CREATE_PAYLOAD")
