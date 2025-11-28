@@ -130,6 +130,7 @@ menu_principal() {
         echo "2. Instalar Postgres"
         echo "3. Instalar Redis"
         echo "4. Instalar N8N"
+        echo "5. Instalar Supabase"
         echo "0. Sair"
         echo ""
         read -p "Escolha uma opção: " opcao
@@ -139,6 +140,7 @@ menu_principal() {
             2) baixar_e_executar "install_postgres.sh" ;;
             3) baixar_e_executar "install_redis.sh" ;;
             4) baixar_e_executar "install_n8n.sh" ;;
+            5) baixar_e_executar "install_supabase.sh" ;;
             0) exit 0 ;;
             *) erro "Opção inválida!" ; sleep 1 ;;
         esac
