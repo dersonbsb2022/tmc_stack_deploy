@@ -71,23 +71,24 @@ verificar_dependencias() {
 # 3. Função para Baixar e Executar Scripts
 baixar_e_executar() {
     local script_name="$1"
-    # Adiciona timestamp para evitar cache do GitHub Raw
-    local url="$REPO_BASE_URL/$script_name?t=$(date +%s)"
     local temp_file="/tmp/$script_name"
-
-    info "Baixando $script_name..."
     
-    # Se for arquivo local (para testes)
-    if [[ "$REPO_BASE_URL" == file://* ]]; then
-        local local_path="${REPO_BASE_URL#file://}/$script_name"
-        if [ -f "$local_path" ]; then
-            cp "$local_path" "$temp_file"
-        else
-            erro "Script não encontrado localmente: $local_path"
-            return 1
-        fi
+    # Detecta diretório local de apps (assumindo estrutura do repo)
+    local script_dir="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+    local local_app_path="$script_dir/apps/$script_name"
+
+    # Lógica Híbrida:
+    # 1. Se o arquivo existir localmente (Ambiente de Dev/Repo clonado), usa ele.
+    # 2. Se não existir, baixa do GitHub (Ambiente de Produção/Curl).
+    
+    if [ -f "$local_app_path" ]; then
+        info "Modo DEV: Usando script local ($local_app_path)..."
+        cp "$local_app_path" "$temp_file"
     else
-        # Download via curl
+        info "Baixando $script_name do GitHub..."
+        # Adiciona timestamp para evitar cache do GitHub Raw
+        local url="$REPO_BASE_URL/$script_name?t=$(date +%s)"
+        
         if ! curl -fsSL "$url" -o "$temp_file"; then
             erro "Falha ao baixar o script: $url"
             return 1
