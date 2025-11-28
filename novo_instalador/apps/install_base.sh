@@ -129,7 +129,7 @@ cat > traefik.yaml <<EOF
 version: "3.7"
 services:
   traefik:
-    image: traefik:v3.4.0
+    image: traefik:v3.6.2
     command:
       - "--api.dashboard=true"
       - "--providers.swarm=true"
