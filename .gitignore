@@ -1,1 +1,5 @@
 TMCStackDeploy
+.github/copilot-instructions.md
+*.yaml
+*-stack.yaml
+
