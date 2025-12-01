@@ -11,35 +11,9 @@ info() { echo -e "${AMARELO}[INFO]${NC} $1"; }
 ok() { echo -e "${VERDE}[OK]${NC} $1"; }
 erro() { echo -e "${VERMELHO}[ERRO]${NC} $1"; }
 
-# Função de espera
-wait_stack() {
-    local service_name="$1"
-    info "Aguardando serviço $service_name iniciar..."
-    local retries=0
-    local max_retries=60
-    
-    while [ $retries -lt $max_retries ]; do
-        if docker service ls --format "{{.Name}} {{.Replicas}}" | grep -q "$service_name"; then
-            local replicas=$(docker service ls --format "{{.Name}} {{.Replicas}}" | grep "$service_name" | awk '{print $2}')
-            local current=$(echo $replicas | cut -d/ -f1)
-            local target=$(echo $replicas | cut -d/ -f2)
-            
-            if [ "$current" == "$target" ] && [ "$target" != "0" ]; then
-                ok "Serviço $service_name está online ($replicas)."
-                return 0
-            fi
-        fi
-        sleep 5
-        retries=$((retries+1))
-        echo -n "."
-    done
-    erro "Timeout aguardando serviço $service_name."
-    return 1
-}
-
 # 1. Carregar Dados do Ambiente
 clear
-echo -e "${VERDE}=== TMC Stack Deploy: Postgres ===${NC}"
+echo -e "${VERDE}=== TMC Stack Deploy: Redis ===${NC}"
 echo ""
 
 DADOS_FILE="/root/dados_vps/dados_portainer"
@@ -52,10 +26,7 @@ if [ -f "$DADOS_FILE" ]; then
     PORTAINER_TOKEN=$(grep "Token:" "$DADOS_FILE" | awk '{print $2}')
     NOME_REDE=$(grep "Network:" "$DADOS_FILE" | awk '{print $2}')
     
-    BASE_DOMAIN=$(echo "$PORTAINER_URL" | sed -e 's|^[^/]*//||' -e 's|^[^.]*\.||')
-    
     ok "Rede: $NOME_REDE"
-    ok "Domínio Base: $BASE_DOMAIN"
 else
     erro "Arquivo de configuração base não encontrado ($DADOS_FILE)."
     erro "Por favor, execute a instalação BASE primeiro."
@@ -64,66 +35,41 @@ fi
 
 # 2. Coleta de Dados
 echo ""
-
-# Tenta recuperar senha existente
-EXISTING_PASS=""
-if [ -f "/srv/postgres/dados_postgres.txt" ]; then
-    EXISTING_PASS=$(grep "Pass:" "/srv/postgres/dados_postgres.txt" | awk '{print $2}')
+read -s -p "Senha do Redis [padrão: gerar aleatória]: " REDIS_PASSWORD
+echo ""
+if [ -z "$REDIS_PASSWORD" ]; then
+    REDIS_PASSWORD=$(openssl rand -hex 16)
+    info "Senha gerada automaticamente."
 fi
-
-read -p "Usuário do Postgres [padrão: postgres]: " POSTGRES_USER
-POSTGRES_USER=${POSTGRES_USER:-postgres}
-
-if [ -n "$EXISTING_PASS" ]; then
-    info "Senha encontrada de instalação anterior."
-    read -s -p "Senha do Postgres [Enter para manter a atual]: " POSTGRES_PASSWORD
-    echo ""
-    POSTGRES_PASSWORD=${POSTGRES_PASSWORD:-$EXISTING_PASS}
-else
-    read -s -p "Senha do Postgres [padrão: gerar aleatória]: " POSTGRES_PASSWORD
-    echo ""
-    if [ -z "$POSTGRES_PASSWORD" ]; then
-        POSTGRES_PASSWORD=$(openssl rand -hex 16)
-        info "Senha gerada automaticamente."
-    fi
-fi
-
-read -p "Nome do Banco de Dados Inicial [padrão: postgres]: " POSTGRES_DB
-POSTGRES_DB=${POSTGRES_DB:-postgres}
 
 # 3. Preparação
-BASE_DIR="/srv/postgres"
+BASE_DIR="/srv/redis"
 mkdir -p "$BASE_DIR/data"
 
 # Salvar Credenciais
-cat > "$BASE_DIR/dados_postgres.txt" <<EOF
-[ POSTGRES ]
-Host: postgres
-Port: 5432
-User: $POSTGRES_USER
-Pass: $POSTGRES_PASSWORD
-DB: $POSTGRES_DB
+cat > "$BASE_DIR/dados_redis.txt" <<EOF
+[ REDIS ]
+Host: redis
+Port: 6379
+Pass: $REDIS_PASSWORD
 EOF
-chmod 600 "$BASE_DIR/dados_postgres.txt"
-ok "Credenciais salvas em $BASE_DIR/dados_postgres.txt"
+chmod 600 "$BASE_DIR/dados_redis.txt"
+ok "Credenciais salvas em $BASE_DIR/dados_redis.txt"
 
 # 4. Gerar Stack
-cat > "$BASE_DIR/postgres-stack.yaml" <<EOF
+cat > "$BASE_DIR/redis-stack.yaml" <<EOF
 version: "3.8"
 
 services:
-  postgres:
-    image: postgres:16-alpine
-    environment:
-      POSTGRES_USER: $POSTGRES_USER
-      POSTGRES_PASSWORD: $POSTGRES_PASSWORD
-      POSTGRES_DB: $POSTGRES_DB
+  redis:
+    image: redis:7-alpine
+    command: redis-server --requirepass $REDIS_PASSWORD
     volumes:
-      - $BASE_DIR/data:/var/lib/postgresql/data
+      - $BASE_DIR/data:/data
     networks:
       $NOME_REDE:
         aliases:
-          - postgres
+          - redis
     deploy:
       mode: replicated
       replicas: 1
@@ -182,10 +128,10 @@ STACKS_RESP=$(curl -k -s -H "Authorization: Bearer $PORTAINER_TOKEN" "$PORTAINER
 STACK_ID=""
 
 if echo "$STACKS_RESP" | jq -e 'type == "array"' >/dev/null 2>&1; then
-    STACK_ID=$(echo "$STACKS_RESP" | jq -r '.[] | select(.Name == "postgres") | .Id' 2>/dev/null || true)
+    STACK_ID=$(echo "$STACKS_RESP" | jq -r '.[] | select(.Name == "redis") | .Id' 2>/dev/null || true)
 fi
 
-STACK_CONTENT=$(cat "$BASE_DIR/postgres-stack.yaml")
+STACK_CONTENT=$(cat "$BASE_DIR/redis-stack.yaml")
 
 if [ -n "$STACK_ID" ]; then
     info "Atualizando stack existente (ID: $STACK_ID) via API..."
@@ -208,14 +154,14 @@ if [ -n "$STACK_ID" ]; then
         ok "Stack atualizada com sucesso via Portainer API."
     else
         erro "Falha ao atualizar stack via API (HTTP $HTTP_CODE)."
-        docker stack deploy -c "$BASE_DIR/postgres-stack.yaml" postgres
+        docker stack deploy -c "$BASE_DIR/redis-stack.yaml" redis
     fi
 
 else
     info "Criando nova stack via Portainer API..."
     
     CREATE_PAYLOAD=$(jq -n \
-        --arg name "postgres" \
+        --arg name "redis" \
         --arg swarmID "$SWARM_ID" \
         --arg stackFileContent "$STACK_CONTENT" \
         '{
@@ -237,23 +183,14 @@ else
     else
         erro "Falha ao criar stack via API."
         echo "Resposta: $RESP"
-        docker stack deploy -c "$BASE_DIR/postgres-stack.yaml" postgres
+        docker stack deploy -c "$BASE_DIR/redis-stack.yaml" redis
     fi
 fi
 
-wait_stack "postgres_postgres"
-
 echo ""
-echo -e "${VERDE}Instalação do Postgres Concluída!${NC}"
-echo "Credenciais salvas em: $BASE_DIR/dados_postgres.txt"
-echo ""
-echo -e "${AMARELO}=== DADOS DE CONEXÃO ===${NC}"
-echo -e "Host: ${VERDE}postgres${NC}"
-echo -e "Porta: ${VERDE}5432${NC}"
-echo -e "Usuário: ${VERDE}$POSTGRES_USER${NC}"
-echo -e "Senha: ${VERDE}$POSTGRES_PASSWORD${NC}"
-echo -e "Banco de Dados: ${VERDE}$POSTGRES_DB${NC}"
-echo -e "${AMARELO}========================${NC}"
-echo "Copie estes dados para usar na instalação de outras aplicações."
+echo -e "${VERDE}=== Instalação do Redis Concluída ===${NC}"
+echo "Host: redis"
+echo "Porta: 6379"
+echo "Senha: $REDIS_PASSWORD"
 echo ""
 read -p "Pressione ENTER para continuar..."

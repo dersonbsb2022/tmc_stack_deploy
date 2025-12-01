@@ -117,7 +117,7 @@ fi
 # 5. Rede Overlay
 info "Criando rede $NOME_REDE..."
 if ! docker network ls | grep -q "$NOME_REDE"; then
-    docker network create --driver=overlay "$NOME_REDE"
+    docker network create --driver=overlay --attachable "$NOME_REDE"
     ok "Rede criada."
 else
     ok "Rede já existe."

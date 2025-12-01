@@ -181,11 +181,12 @@ menu_principal() {
         echo "4. Instalar N8N"
         echo "5. Instalar Supabase"
         echo "6. Instalar RabbitMQ (Teste Simples)"
+        echo "9. Limpeza Completa (Reset)"
         echo "0. Sair"
         echo ""
         read -p "Escolha uma opção: " opcao
 
-        # Verifica token antes de qualquer instalação que não seja a Base (1)
+        # Verifica token antes de qualquer instalação que não seja a Base (1) ou Limpeza (9)
         if [[ "$opcao" =~ ^[2-6]$ ]]; then
             verificar_e_renovar_token
         fi
@@ -197,6 +198,7 @@ menu_principal() {
             4) baixar_e_executar "install_n8n.sh" ;;
             5) baixar_e_executar "install_supabase.sh" ;;
             6) baixar_e_executar "install_rabbitmq.sh" ;;
+            9) baixar_e_executar "cleanup.sh" ;;
             0) exit 0 ;;
             *) erro "Opção inválida!" ; sleep 1 ;;
         esac
