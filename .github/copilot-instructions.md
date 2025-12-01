@@ -73,3 +73,6 @@ The `TMCStackDeploy` script is the central orchestrator. Any new development sho
 
 ## Language & Tools
 - Responda sempre em portugues BR.
+
+## Git & Version Control
+- **Ignored Files:** Never push `.yaml` files (like `portainer.yaml`, `traefik.yaml`, `*-stack.yaml`) to the GitHub repository. These files are generated dynamically or contain sensitive information and should remain local.
